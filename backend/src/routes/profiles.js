@@ -51,7 +51,7 @@ router.put('/:id', (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const allowedUpdates = ['name', 'profilePicture', 'otherInfo'];
+    const allowedUpdates = ['name', 'profilePicture', 'otherInfo', 'pomodoroSound'];
     const updates = {};
     
     for (const field of allowedUpdates) {

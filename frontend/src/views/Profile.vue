@@ -158,7 +158,18 @@
         </div>
 
         <!-- Pomodoro Section -->
-        <PomodoroTimer />
+        <div class="bg-white rounded-lg shadow p-6">
+          <h2 class="text-lg font-semibold text-gray-900 mb-4">Pomodoro Timer</h2>
+          <p class="text-gray-600 mb-4">
+            Use the Pomodoro Timer to focus on your work with timed sessions.
+          </p>
+          <router-link
+            to="/pomodoro"
+            class="inline-block px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-colors"
+          >
+            Open Pomodoro Timer
+          </router-link>
+        </div>
 
         <!-- Save Button -->
         <div class="flex justify-end space-x-4">
@@ -180,7 +191,6 @@ import { ref, reactive, computed, onMounted } from 'vue';
 import { useTeamStore } from '../stores/teamStore.js';
 import api from '../services/api.js';
 import StatusSelector from '../components/StatusSelector.vue';
-import PomodoroTimer from '../components/PomodoroTimer.vue';
 import { DEFAULT_PROFILE_PICTURE } from '../constants.js';
 
 const teamStore = useTeamStore();

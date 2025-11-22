@@ -2,8 +2,10 @@
   <div
     :class="[
       'bg-white rounded-lg shadow-md p-6 transition-all hover:shadow-lg border-l-4 relative',
-      statusColor
+      statusColor,
+      { 'pomodoro-fading': isFading }
     ]"
+    :style="fadeStyle"
   >
     <div class="flex items-start space-x-4">
       <!-- Profile Picture -->
@@ -110,6 +112,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useTeamStore } from '../stores/teamStore.js';
 import api from '../services/api.js';
+import { socketService } from '../services/socket.js';
 import { DEFAULT_PROFILE_PICTURE } from '../constants.js';
 
 const props = defineProps({
@@ -124,7 +127,10 @@ const pomodoroTimeLeft = ref('');
 const updatingStatus = ref(false);
 const updatingPomodoro = ref(false);
 const pomodoroDuration = ref(25);
+const isFading = ref(false);
+const fadeProgress = ref(0);
 let pomodoroInterval = null;
+let fadeInterval = null;
 
 const isCurrentUser = computed(() => {
   return teamStore.currentUser && teamStore.currentUser.id === props.member.id;
@@ -150,6 +156,65 @@ const getStatusColorValue = (status) => {
   };
   return colors[status] || colors.available;
 };
+
+// Compute fade style when fading from locked in to next status
+const fadeStyle = computed(() => {
+  if (!isFading.value || !props.member.pomodoroActive) {
+    return {};
+  }
+  
+  const lockedInColor = '#4f46e5'; // indigo-600
+  const nextStatus = props.member.previousStatus || 'available';
+  const nextStatusColor = getStatusColorValue(nextStatus);
+  
+  // Interpolate between colors based on fade progress (0 to 1)
+  const interpolateColor = (color1, color2, progress) => {
+    const hex1 = color1.replace('#', '');
+    const hex2 = color2.replace('#', '');
+    
+    const r1 = parseInt(hex1.substring(0, 2), 16);
+    const g1 = parseInt(hex1.substring(2, 4), 16);
+    const b1 = parseInt(hex1.substring(4, 6), 16);
+    
+    const r2 = parseInt(hex2.substring(0, 2), 16);
+    const g2 = parseInt(hex2.substring(2, 4), 16);
+    const b2 = parseInt(hex2.substring(4, 6), 16);
+    
+    const r = Math.round(r1 + (r2 - r1) * progress);
+    const g = Math.round(g1 + (g2 - g1) * progress);
+    const b = Math.round(b1 + (b2 - b1) * progress);
+    
+    return `rgb(${r}, ${g}, ${b})`;
+  };
+  
+  const currentColor = interpolateColor(lockedInColor, nextStatusColor, fadeProgress.value);
+  
+  // Determine text color based on background brightness
+  // For darker colors (like locked in), use white text; for lighter, use dark
+  const getBrightness = (r, g, b) => {
+    return (r * 299 + g * 587 + b * 114) / 1000;
+  };
+  
+  const hex1 = lockedInColor.replace('#', '');
+  const hex2 = nextStatusColor.replace('#', '');
+  const r1 = parseInt(hex1.substring(0, 2), 16);
+  const g1 = parseInt(hex1.substring(2, 4), 16);
+  const b1 = parseInt(hex1.substring(4, 6), 16);
+  const r2 = parseInt(hex2.substring(0, 2), 16);
+  const g2 = parseInt(hex2.substring(2, 4), 16);
+  const b2 = parseInt(hex2.substring(4, 6), 16);
+  
+  const currentR = Math.round(r1 + (r2 - r1) * fadeProgress.value);
+  const currentG = Math.round(g1 + (g2 - g1) * fadeProgress.value);
+  const currentB = Math.round(b1 + (b2 - b1) * fadeProgress.value);
+  const brightness = getBrightness(currentR, currentG, currentB);
+  
+  return {
+    backgroundColor: currentColor,
+    borderLeftColor: currentColor,
+    color: brightness < 128 ? 'white' : '#1f2937' // white for dark backgrounds, dark gray for light
+  };
+});
 
 const handleStatusChange = async (event) => {
   if (!isCurrentUser.value) return;
@@ -185,8 +250,19 @@ const updatePomodoroTime = () => {
       const minutes = Math.floor(diff / 60000);
       const seconds = Math.floor((diff % 60000) / 1000);
       pomodoroTimeLeft.value = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+      
+      // Check if we're 5 seconds or less from the end - start fade
+      const secondsLeft = diff / 1000;
+      if (secondsLeft <= 5 && !isFading.value) {
+        startFade();
+      } else if (secondsLeft > 5 && isFading.value) {
+        // Reset if pomodoro was extended or restarted
+        stopFade();
+      }
     } else {
-      // Pomodoro has expired, automatically stop it if it's the current user
+      // Pomodoro has expired
+      stopFade();
+      // Automatically stop it if it's the current user
       if (isCurrentUser.value && props.member.pomodoroActive) {
         handleStopPomodoro();
       }
@@ -194,12 +270,69 @@ const updatePomodoroTime = () => {
     }
   } else {
     pomodoroTimeLeft.value = '';
+    stopFade();
+  }
+};
+
+const startFade = () => {
+  if (isFading.value) return; // Already fading
+  
+  isFading.value = true;
+  
+  const updateFade = () => {
+    if (!props.member.pomodoroActive || !props.member.pomodoroEndTime) {
+      stopFade();
+      return;
+    }
+    
+    const endTime = new Date(props.member.pomodoroEndTime);
+    const now = new Date();
+    const diff = endTime - now;
+    const secondsLeft = diff / 1000;
+    
+    if (secondsLeft <= 0) {
+      fadeProgress.value = 1;
+      stopFade();
+      return;
+    }
+    
+    // Calculate progress: 0 when 5 seconds left, 1 when 0 seconds left
+    // So progress = (5 - secondsLeft) / 5
+    fadeProgress.value = Math.max(0, Math.min(1, (5 - secondsLeft) / 5));
+  };
+  
+  updateFade(); // Initial update
+  fadeInterval = setInterval(updateFade, 16); // Update ~60fps
+};
+
+const stopFade = () => {
+  isFading.value = false;
+  fadeProgress.value = 0;
+  if (fadeInterval) {
+    clearInterval(fadeInterval);
+    fadeInterval = null;
+  }
+};
+
+// Handle pomodoro stop event - ensure fade completes
+const handlePomodoroStop = (data) => {
+  if (data.userId === props.member.id) {
+    // Ensure fade is complete
+    if (isFading.value) {
+      fadeProgress.value = 1;
+      setTimeout(() => {
+        stopFade();
+      }, 100);
+    }
   }
 };
 
 onMounted(() => {
   updatePomodoroTime();
   pomodoroInterval = setInterval(updatePomodoroTime, 1000);
+  
+  // Listen for pomodoro stop events
+  socketService.on('pomodoro:stop', handlePomodoroStop);
 });
 
 const handleStartPomodoro = async () => {
@@ -250,6 +383,16 @@ onUnmounted(() => {
   if (pomodoroInterval) {
     clearInterval(pomodoroInterval);
   }
+  if (fadeInterval) {
+    clearInterval(fadeInterval);
+  }
+  socketService.off('pomodoro:stop', handlePomodoroStop);
 });
 </script>
+
+<style scoped>
+.pomodoro-fading * {
+  color: inherit !important;
+}
+</style>
 
